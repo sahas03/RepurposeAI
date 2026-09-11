@@ -167,8 +167,8 @@ def score_reversal(disease_df: pd.DataFrame, l1000_df: pd.DataFrame,
       "wtcs"             -- weighted_connectivity_score; kwargs pass through
                             (up_thresh, down_thresh, max_set_size, weighted, ...)
     disease_df: harmonized gene/logFC table. Both methods return a Series in [-1, 1],
-    sorted ascending, most negative = strongest reversal -- so rank_candidates and
-    filters.combine_scores work unchanged with either.
+    sorted ascending, most negative = strongest reversal -- so rank_candidates,
+    validate.check_recovery and filters.screen_drugs work unchanged with either.
     """
     if method == "cosine":
         if kwargs:
