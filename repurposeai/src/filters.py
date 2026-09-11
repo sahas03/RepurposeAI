@@ -21,6 +21,8 @@ Survivors are ranked by reversal score (most negative first).
 from __future__ import annotations
 import pandas as pd
 
+from signature_matching import check_scores, sort_scores
+
 try:
     from rdkit import Chem
     from rdkit.Chem import Descriptors, Lipinski
@@ -151,8 +153,10 @@ def screen_drugs(scores: pd.Series, known_indications: dict[str, set[str]], dise
             = stronger reversal). Pass the full series, not a top-N slice, so
             exclusions don't shrink the candidate list.
     smiles_lookup: optional; without it every drug is "not screened" for safety.
+    Raises on NaN scores or duplicate drug names rather than misclassifying them.
     """
-    out = scores.sort_values().rename("reversal_score").rename_axis("drug").reset_index()
+    check_scores(scores)
+    out = sort_scores(scores).rename("reversal_score").rename_axis("drug").reset_index()
     out["reversal_rank"] = range(1, len(out) + 1)
     out = apply_novelty_filter(out, known_indications, disease_name)
 
@@ -179,7 +183,8 @@ def rank_repurposing_candidates(screened: pd.DataFrame, top_n: int | None = 20) 
     reversal score alone (most negative first). Already-indicated drugs are never
     in this list -- see validate.check_recovery for those.
     """
-    out = screened[screened["candidate_status"] == STATUS_CANDIDATE].sort_values("reversal_score")
+    # reversal_rank already encodes score order with a deterministic tie-break
+    out = screened[screened["candidate_status"] == STATUS_CANDIDATE].sort_values("reversal_rank")
     if top_n is not None:
         out = out.head(top_n)
     out = out.drop(columns=["candidate_status", "known_for_disease", "is_novel", "novelty_label"])

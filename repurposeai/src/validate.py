@@ -25,6 +25,8 @@ test of the scoring method, not a shortlist.
 from __future__ import annotations
 import pandas as pd
 
+from signature_matching import check_scores, sort_scores
+
 
 # Known reference drugs for validation -- extend this list as you research
 # your chosen disease further during Day 1-2.
@@ -64,7 +66,8 @@ def check_recovery(reversal_scores: pd.Series | pd.DataFrame, disease_name: str,
 
     if isinstance(reversal_scores, pd.DataFrame):
         reversal_scores = reversal_scores.set_index(drug_col)["reversal_score"]
-    ordered = [str(d).lower().strip() for d in reversal_scores.sort_values().index]
+    check_scores(reversal_scores)  # NaN scores or duplicate names would corrupt ranks
+    ordered = [str(d).lower().strip() for d in sort_scores(reversal_scores).index]
     ranks = {d: i + 1 for i, d in enumerate(ordered)}
 
     recovered = {d for d in reference_set if ranks.get(d, top_k + 1) <= top_k}

@@ -14,7 +14,74 @@ import warnings
 import pandas as pd
 import numpy as np
 
-from data_loader import zscore_disease_signature
+from data_loader import zscore_disease_signature, MIN_SHARED_GENES
+
+
+def sort_scores(scores: pd.Series) -> pd.Series:
+    """
+    Sort ascending (most negative = strongest reversal). Exact ties are broken by
+    drug name, so rankings never depend on incidental column order in the matrix.
+    """
+    by_name = scores.sort_index(kind="mergesort", key=lambda idx: idx.astype(str))
+    return by_name.sort_values(kind="mergesort")
+
+
+def check_scores(scores: pd.Series) -> None:
+    """
+    Reject score series that would silently corrupt a ranking: NaN/inf scores (they
+    sort to the end and slip through "score < 0" style checks) and drug names that
+    collide case-insensitively (one copy's rank would overwrite the other's).
+    """
+    bad = scores.index[~np.isfinite(scores.to_numpy(dtype=float))]
+    if len(bad):
+        raise ValueError(
+            f"{len(bad)} drug(s) have NaN/infinite reversal scores (e.g. {list(bad[:5])}); "
+            "check the drug matrix and disease signature for missing or constant values."
+        )
+    _check_unique_drugs(scores.index)
+
+
+def _check_unique_drugs(names) -> None:
+    norm = pd.Index([str(n).lower().strip() for n in names])
+    dupes = sorted(set(norm[norm.duplicated()]))
+    if dupes:
+        raise ValueError(
+            f"Duplicate drug names (case-insensitive): {dupes[:5]}. Collapse replicate "
+            "signatures per drug (e.g. average them) so no drug is double-counted or overwritten."
+        )
+
+
+def _check_inputs(genes: pd.Index, l1000_df: pd.DataFrame, require_all_genes: bool) -> None:
+    """Shared input checks for both scoring methods -- fail loudly, never score garbage."""
+    _check_unique_drugs(l1000_df.columns)
+    shared = genes.intersection(l1000_df.index)
+    if len(shared) == 0:
+        raise ValueError(
+            "No shared genes between the disease signature and the drug matrix "
+            f"(e.g. {list(genes[:3])} vs {list(l1000_df.index[:3])}). "
+            "Check both use the same gene ID type and case."
+        )
+    if require_all_genes and len(shared) < len(genes):
+        missing = genes.difference(l1000_df.index)
+        raise ValueError(
+            f"{len(missing)} of {len(genes)} disease genes are missing from the drug matrix "
+            f"(e.g. {list(missing[:3])}); run data_loader.harmonize_genes first."
+        )
+    if len(shared) < MIN_SHARED_GENES:
+        raise ValueError(
+            f"Only {len(shared)} shared gene(s); at least {MIN_SHARED_GENES} are needed for a "
+            "meaningful reversal score (with 1 gene every drug scores exactly +/-1)."
+        )
+
+
+def _reject_non_finite(values: np.ndarray, drugs: pd.Index) -> None:
+    """values: genes x drugs. A NaN/inf would silently become a NaN score (cosine) or 0 (WTCS)."""
+    bad = ~np.isfinite(values).all(axis=0)
+    if bad.any():
+        raise ValueError(
+            f"{int(bad.sum())} drug(s) have NaN/infinite expression values "
+            f"(e.g. {list(drugs[bad][:5])}); drop or impute them before scoring."
+        )
 
 
 def cosine_reversal_score(disease_vec: pd.Series, l1000_df: pd.DataFrame) -> pd.Series:
@@ -27,20 +94,33 @@ def cosine_reversal_score(disease_vec: pd.Series, l1000_df: pd.DataFrame) -> pd.
     Vectorized (one matrix-vector product over all drugs) -- same math as the
     original per-drug loop, but stays fast at real L1000 scale (~1k genes x
     thousands-to-20k compound signatures).
+
+    An all-zero drug column (no expression change at all) has an undefined cosine;
+    it is scored 0.0 = "reverses nothing", which is what such a drug does.
     """
     genes = disease_vec.index
+    _check_inputs(genes, l1000_df, require_all_genes=True)
     d = disease_vec.values.astype(float)
-    d_norm = np.linalg.norm(d)
-    if d_norm == 0:
-        raise ValueError("Disease vector has zero norm; check input signature.")
+    if not np.isfinite(d).all():
+        raise ValueError("Disease vector contains NaN/inf values; check the input signature.")
+    if np.ptp(d) == 0:
+        raise ValueError("Disease vector has zero variance; there is no differential expression to reverse.")
 
-    v = l1000_df.loc[genes].values.astype(float)  # genes x drugs, aligned to disease_vec
-    v_norms = np.linalg.norm(v, axis=0)
+    # genes x drugs, aligned to disease_vec, row-major
+    v = np.ascontiguousarray(l1000_df.loc[genes].to_numpy(dtype=float))
+    _reject_non_finite(v, l1000_df.columns)
+    # Row-by-row accumulation applies the same floating-point ops to every column, so
+    # identical drug signatures get bit-identical scores and ties are broken by name.
+    # (A BLAS product `d @ v` rounds differently by column position, so ties would
+    # silently follow column order.)
+    d_norm = np.linalg.norm(d)
+    dots = (v * d[:, None]).sum(axis=0)
+    v_norms = np.sqrt((v * v).sum(axis=0))
     with np.errstate(divide="ignore", invalid="ignore"):
-        cos_sim = (d @ v) / (d_norm * v_norms)
+        cos_sim = dots / (d_norm * v_norms)
     cos_sim = np.where(v_norms == 0, 0.0, cos_sim)
 
-    return pd.Series(cos_sim, index=l1000_df.columns, name="cosine_similarity").sort_values()
+    return sort_scores(pd.Series(cos_sim, index=l1000_df.columns, name="cosine_similarity"))
 
 
 def select_query_gene_sets(disease_df: pd.DataFrame, universe,
@@ -97,13 +177,21 @@ def weighted_connectivity_score(disease_df: pd.DataFrame, l1000_df: pd.DataFrame
     disease_df must have columns: gene, logFC (as produced by data_loader.load_disease_signature)
     Vectorized over drugs, processed in chunks of chunk_size to bound memory.
     """
+    _check_inputs(pd.Index(disease_df["gene"]), l1000_df, require_all_genes=False)
+    shared_lfc = disease_df.loc[disease_df["gene"].isin(l1000_df.index), "logFC"].to_numpy(dtype=float)
+    if np.ptp(shared_lfc) == 0:
+        raise ValueError("Disease signature has zero variance (all logFC equal); "
+                         "there is no differential expression to reverse.")
+    z = l1000_df.values.astype(float)
+    _reject_non_finite(z, l1000_df.columns)  # WTCS ranks every gene in the matrix
+
     up_genes, down_genes = select_query_gene_sets(disease_df, l1000_df.index,
                                                   up_thresh, down_thresh, max_set_size)
     up_mask = l1000_df.index.isin(up_genes)
     down_mask = l1000_df.index.isin(down_genes)
 
     if weighted:
-        es_up, es_down = _weighted_es(l1000_df.values.astype(float), [up_mask, down_mask], chunk_size)
+        es_up, es_down = _weighted_es(z, [up_mask, down_mask], chunk_size)
     else:
         ranks = l1000_df.rank(ascending=False).values  # rank 1 = most up-regulated by drug
         es_up = _ks_es(ranks, up_mask)
@@ -112,7 +200,7 @@ def weighted_connectivity_score(disease_df: pd.DataFrame, l1000_df: pd.DataFrame
     # Reversal: disease-up genes should be DOWN-regulated by the drug (negative ES),
     # disease-down genes should be UP-regulated by the drug (positive ES).
     wtcs = np.where(np.sign(es_up) != np.sign(es_down), (es_up - es_down) / 2, 0.0)
-    return pd.Series(wtcs, index=l1000_df.columns, name="wtcs").sort_values()
+    return sort_scores(pd.Series(wtcs, index=l1000_df.columns, name="wtcs"))
 
 
 def _weighted_es(z: np.ndarray, gene_sets: list[np.ndarray], chunk_size: int) -> list[np.ndarray]:
@@ -181,7 +269,7 @@ def score_reversal(disease_df: pd.DataFrame, l1000_df: pd.DataFrame,
 
 def rank_candidates(score_series: pd.Series, top_n: int = 20) -> pd.DataFrame:
     """Return the top_n strongest reversal candidates as a tidy DataFrame."""
-    out = score_series.sort_values().head(top_n).reset_index()
+    out = sort_scores(score_series).head(top_n).reset_index()
     out.columns = ["drug", "reversal_score"]
     out["rank"] = np.arange(1, len(out) + 1)
     return out[["rank", "drug", "reversal_score"]]
