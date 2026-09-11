@@ -1,0 +1,41 @@
+"""
+Cross-dialect column types.
+
+GUID stores a native UUID on PostgreSQL and a CHAR(32) hex string everywhere else
+(e.g. SQLite, used by the test suite), so the exact same models run against both
+without conditional schema branches.
+"""
+import uuid
+
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.types import CHAR, JSON, TypeDecorator
+
+
+class GUID(TypeDecorator):
+    impl = CHAR
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(PG_UUID(as_uuid=True))
+        return dialect.type_descriptor(CHAR(32))
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return value
+        if dialect.name == "postgresql":
+            return str(value)
+        if not isinstance(value, uuid.UUID):
+            value = uuid.UUID(value)
+        return value.hex
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return value
+        if isinstance(value, uuid.UUID):
+            return value
+        return uuid.UUID(value)
+
+
+# Generic JSON column: maps to JSON on PostgreSQL and SQLite alike.
+JSONType = JSON
