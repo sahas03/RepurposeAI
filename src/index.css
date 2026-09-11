@@ -1,0 +1,208 @@
+@import '@fontsource-variable/space-grotesk';
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/jetbrains-mono';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   REPURPOSEAI DESIGN TOKENS
+   The identity is built on one idea: the product is about two
+   opposing biological signals. EMBER = disease signal, MINT =
+   corrective / reversal signal. Every visualization in the app
+   speaks that two-pole language.
+   ============================================================ */
+
+@layer base {
+  :root,
+  [data-theme='light'] {
+    color-scheme: light;
+    /* clinical research laboratory - bone white with a cool cast */
+    --c-base: 238 243 242;
+    --c-surface: 255 255 255;
+    --c-raised: 250 253 252;
+    --c-line: 12 60 54;      /* used at low alpha */
+    --c-ink: 8 26 24;
+    --c-dim: 62 92 88;
+    --c-faint: 122 148 144;
+    --c-hi: 255 255 255;
+    --c-shadow: 12 46 42;
+
+    --c-ember: 208 74 26;
+    --c-mint: 0 150 112;
+    --c-iris: 78 88 214;
+    --c-signal: 12 122 168;
+    --c-amber: 176 108 6;
+
+    --glass: 255 255 255;
+    --glass-a: 0.66;
+    --line-a: 0.11;
+    --grid-a: 0.055;
+    --veil: 238 243 242;
+
+    --bloom: 0.45;
+  }
+
+  [data-theme='dark'] {
+    color-scheme: dark;
+    /* deep-space biotech lab - carbon with a teal cast, never blue-black */
+    --c-base: 4 9 11;
+    --c-surface: 10 18 20;
+    --c-raised: 14 24 26;
+    --c-line: 108 226 190;
+    --c-ink: 226 240 237;
+    --c-dim: 141 166 162;
+    --c-faint: 95 118 116;
+    --c-hi: 190 255 236;
+    --c-shadow: 0 0 0;
+
+    --c-ember: 255 122 69;
+    --c-mint: 45 232 176;
+    --c-iris: 138 148 255;
+    --c-signal: 76 201 240;
+    --c-amber: 255 179 92;
+
+    --glass: 12 22 25;
+    --glass-a: 0.5;
+    --line-a: 0.16;
+    --grid-a: 0.075;
+    --veil: 4 9 11;
+
+    --bloom: 1;
+  }
+
+  * { border-color: rgb(var(--c-line) / var(--line-a)); }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    background: rgb(var(--c-base));
+    color: rgb(var(--c-ink));
+    font-family: theme('fontFamily.sans');
+    font-synthesis-weight: none;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+    /* The theme transition is deliberately slow: the *environment*
+       should feel like it is changing state, not flipping. */
+    transition: background-color 900ms cubic-bezier(0.22, 1, 0.36, 1),
+                color 900ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  ::selection { background: rgb(var(--c-mint) / 0.28); }
+
+  /* Instrument-grade scrollbar */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: rgb(var(--c-base)); }
+  ::-webkit-scrollbar-thumb {
+    background: rgb(var(--c-line) / 0.22);
+    border: 3px solid rgb(var(--c-base));
+    border-radius: 99px;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: rgb(var(--c-mint) / 0.4); }
+
+  /* The custom cursor replaces the native one on precise pointers only. */
+  @media (pointer: fine) {
+    html.rpa-cursor, html.rpa-cursor * { cursor: none !important; }
+  }
+}
+
+@layer components {
+  .glass {
+    background: linear-gradient(
+      180deg,
+      rgb(var(--glass) / calc(var(--glass-a) + 0.06)),
+      rgb(var(--glass) / calc(var(--glass-a) - 0.08))
+    );
+    backdrop-filter: blur(20px) saturate(150%);
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
+    border: 1px solid rgb(var(--c-line) / var(--line-a));
+    box-shadow: theme('boxShadow.panel');
+  }
+
+  /* 1px inner top highlight - reads as a machined bevel */
+  .bevel::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(180deg, rgb(var(--c-hi) / 0.22), transparent 42%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  .hud {
+    font-family: theme('fontFamily.mono');
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: theme('letterSpacing.hud');
+    text-transform: uppercase;
+    color: rgb(var(--c-faint));
+  }
+
+  .rule-h {
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgb(var(--c-line) / 0.3) 15%,
+      rgb(var(--c-mint) / 0.32) 50%,
+      rgb(var(--c-line) / 0.3) 85%,
+      transparent
+    );
+  }
+
+  /* Corner ticks: cheap, precise, and instantly reads as instrumentation. */
+  .ticks::after {
+    content: '';
+    position: absolute;
+    inset: 7px;
+    pointer-events: none;
+    border-radius: 2px;
+    background:
+      linear-gradient(rgb(var(--c-mint) / 0.5) 0 0) 0 0 / 9px 1px no-repeat,
+      linear-gradient(rgb(var(--c-mint) / 0.5) 0 0) 0 0 / 1px 9px no-repeat,
+      linear-gradient(rgb(var(--c-mint) / 0.5) 0 0) 100% 0 / 9px 1px no-repeat,
+      linear-gradient(rgb(var(--c-mint) / 0.5) 0 0) 100% 0 / 1px 9px no-repeat,
+      linear-gradient(rgb(var(--c-mint) / 0.5) 0 0) 0 100% / 9px 1px no-repeat,
+      linear-gradient(rgb(var(--c-mint) / 0.5) 0 0) 0 100% / 1px 9px no-repeat,
+      linear-gradient(rgb(var(--c-mint) / 0.5) 0 0) 100% 100% / 9px 1px no-repeat,
+      linear-gradient(rgb(var(--c-mint) / 0.5) 0 0) 100% 100% / 1px 9px no-repeat;
+    opacity: 0.6;
+  }
+
+  .num { font-family: theme('fontFamily.mono'); font-variant-numeric: tabular-nums; }
+}
+
+@layer utilities {
+  .text-balance { text-wrap: balance; }
+  .text-pretty { text-wrap: pretty; }
+
+  .mask-fade-b {
+    -webkit-mask-image: linear-gradient(180deg, #000 62%, transparent);
+    mask-image: linear-gradient(180deg, #000 62%, transparent);
+  }
+  .mask-fade-x {
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+  }
+
+  .glow-mint { filter: drop-shadow(0 0 calc(10px * var(--bloom)) rgb(var(--c-mint) / 0.55)); }
+  .glow-ember { filter: drop-shadow(0 0 calc(10px * var(--bloom)) rgb(var(--c-ember) / 0.5)); }
+}
+
+/* Honour the OS setting: keep the composition, drop the motion. */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
