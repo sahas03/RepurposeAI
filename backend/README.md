@@ -15,11 +15,21 @@ Streamlit dashboard and `repurposeai/tests/` exercise.
 ```bash
 pip install -r backend/requirements.txt
 cd backend
-uvicorn repurpose_api.main:app --reload --port 8000
+python scripts/serve.py
 ```
 
 - Interactive docs: <http://localhost:8000/docs>
 - Capability check: <http://localhost:8000/api/health>
+- OpenAPI schema: <http://localhost:8000/openapi.json>
+
+**Use `scripts/serve.py`, not `uvicorn` directly**, unless you know which loopback
+address you want. On Windows `localhost` resolves to the IPv6 address `::1`, but
+`uvicorn --host 127.0.0.1` binds IPv4 only — the server comes up healthy and the browser
+still shows a connection error, with nothing in the log, because the request never
+arrives. `--host ::` inverts the problem. Windows defaults `IPV6_V6ONLY` to on, so no
+single bind covers both; `serve.py` listens on `127.0.0.1` **and** `::1` in one process,
+still loopback-only. Pass `--reload` for auto-restart during development, or
+`--host 0.0.0.0` to share it on the LAN.
 
 ```bash
 curl -X POST http://localhost:8000/api/run \
