@@ -194,8 +194,13 @@ def test_tie_ordering_is_deterministic_and_matches_the_frontend(client):
     """
     import pandas as pd
 
+    from repurpose_api.datasets import get_spec
+
+    # Resolve via the service's own config rather than a path relative to the
+    # CWD: after the three branches merged, tests are naturally run from the
+    # repo root, where "../repurposeai/..." does not resolve.
     columns = list(
-        pd.read_csv("../repurposeai/data/raw/l1000_matrix.csv", index_col=0, nrows=1).columns
+        pd.read_csv(get_spec(DATASET).matrix_path, index_col=0, nrows=1).columns
     )
     position = {drug: i for i, drug in enumerate(columns)}
 
