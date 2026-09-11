@@ -5,10 +5,14 @@ interpretability -> validation-style recovery check.
 
 Run: python tests/test_pipeline.py
 (Uses only the "planted" mock data, no internet or real data required.)
+
+Mock data is written to a throwaway temp directory, NOT data/raw/ -- data/raw/
+holds the shared real-data files, and running this test must never overwrite them.
 """
 
 import sys
 import os
+import tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
@@ -17,13 +21,21 @@ from data_loader import load_disease_signature, load_l1000_matrix, harmonize_gen
 from signature_matching import cosine_reversal_score, rank_candidates
 from interpretability import top_contributing_genes
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "raw")
-
 
 def main():
+    with tempfile.TemporaryDirectory() as tmp:
+        _run(tmp)
+
+
+def test_pipeline():
+    main()
+
+
+def _run(DATA_DIR):
     print("=" * 60)
     print("STEP 0: generating mock data")
     print("=" * 60)
+    generate_mock_data.OUT_DIR = DATA_DIR  # redirect away from data/raw/
     generate_mock_data.main()
 
     print("\n" + "=" * 60)

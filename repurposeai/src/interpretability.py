@@ -24,8 +24,27 @@ def top_contributing_genes(disease_vec: pd.Series, drug_vec: pd.Series, top_n: i
     Per-gene contribution to the cosine similarity between disease and drug vectors.
     Contribution_i = d_i * v_i (element-wise product) -- genes with the most negative
     products are driving the reversal signal most strongly.
+
+    Gene identifiers are treated as opaque labels: any format works (symbols like
+    TNF, Entrez IDs, placeholders), matched by label not position, in any order.
+    Note "disease_logFC" holds whatever disease_vec contains -- in the pipeline that
+    is the z-scored signature from data_loader.zscore_disease_signature.
     """
-    genes = disease_vec.index.intersection(drug_vec.index)
+    for name, s in (("disease_vec", disease_vec), ("drug_vec", drug_vec)):
+        dupes = s.index[s.index.duplicated()]
+        if len(dupes):
+            raise ValueError(
+                f"{name} has duplicate gene labels (e.g. {list(dupes[:3])}); collapse them "
+                "first (data_loader keeps the first occurrence)."
+            )
+
+    genes = disease_vec.index.intersection(drug_vec.index, sort=False)
+    if len(genes) == 0:
+        raise ValueError(
+            "No shared gene labels between disease and drug vectors "
+            f"(e.g. {list(disease_vec.index[:3])} vs {list(drug_vec.index[:3])}). "
+            "Check both use the same ID type (e.g. HGNC symbols) and case."
+        )
     d = disease_vec.loc[genes]
     v = drug_vec.loc[genes]
     contribution = d * v
@@ -35,7 +54,12 @@ def top_contributing_genes(disease_vec: pd.Series, drug_vec: pd.Series, top_n: i
         "disease_logFC": d.values,
         "drug_zscore": v.values,
         "contribution": contribution.values,
-    }).sort_values("contribution").head(top_n).reset_index(drop=True)
+    }).dropna(subset=["contribution"])
+    # Stable sort + label tiebreak -> deterministic order regardless of input gene order
+    out = (out.assign(_label=out["gene"].astype(str))
+              .sort_values(["contribution", "_label"], kind="mergesort")
+              .drop(columns="_label")
+              .head(top_n).reset_index(drop=True))
 
     out["direction"] = np.where(
         out["contribution"] < 0, "reversed by drug", "reinforced by drug (unwanted)"
@@ -76,13 +100,14 @@ def explain_candidate(drug: str, disease_vec: pd.Series, l1000_df: pd.DataFrame,
         "top_genes": genes_df,
         "summary": (
             f"{drug} most strongly reverses {sum(genes_df['direction'] == 'reversed by drug')} "
-            f"of the top {top_n_genes} disease-associated genes examined, including "
-            f"{', '.join(genes_df['gene'].head(3).tolist())}."
+            f"of the top {len(genes_df)} disease-associated genes examined, including "
+            f"{', '.join(genes_df['gene'].head(3).astype(str))}."
         ),
     }
 
     if run_pathways and GSEAPY_AVAILABLE:
-        reversed_genes = genes_df[genes_df["direction"] == "reversed by drug"]["gene"].tolist()
+        # Enrichr only recognizes gene SYMBOLS -- placeholder or numeric IDs return no pathways
+        reversed_genes = genes_df.loc[genes_df["direction"] == "reversed by drug", "gene"].astype(str).tolist()
         if reversed_genes:
             explanation["pathways"] = pathway_enrichment(reversed_genes)
 
