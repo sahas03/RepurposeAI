@@ -5,7 +5,7 @@ RepurposeAI Phase 5 demo -- CBIT Ideathon 5.0.
 Narrative: disease signature -> drug library -> reversal scoring ->
 safety/novelty filter -> explainability -> validation. Built to run today
 on mock data and swap to real data without a rewrite (see DATA SOURCE in
-the sidebar, which auto-detects data/raw/*.csv).
+the sidebar, which auto-detects data/processed/*.csv).
 
 Run: streamlit run app/dashboard.py
 
@@ -29,7 +29,11 @@ import streamlit as st
 APP_DIR = os.path.dirname(__file__)
 SRC_DIR = os.path.join(APP_DIR, "..", "src")
 SCRIPTS_DIR = os.path.join(APP_DIR, "..", "scripts")
-DATA_DIR = os.path.join(APP_DIR, "..", "data", "raw")
+# Real data lives in data/processed/. data/raw/ holds ONLY synthetic mock
+# data, which scripts/generate_mock_data.py and tests/test_pipeline.py
+# regenerate on every run -- never point real-data loading at it.
+REAL_DATA_DIR = os.path.join(APP_DIR, "..", "data", "processed")
+MOCK_DATA_DIR = os.path.join(APP_DIR, "..", "data", "raw")
 sys.path.insert(0, SRC_DIR)
 sys.path.insert(0, SCRIPTS_DIR)
 
@@ -60,10 +64,14 @@ from styles import (  # noqa: E402
 )
 from graphics import render_background, render_heatmap_explainer  # noqa: E402
 
-DISEASE_PATH = os.path.join(DATA_DIR, "disease_signature.csv")
-L1000_PATH = os.path.join(DATA_DIR, "l1000_matrix.csv")
-SMILES_LOOKUP_PATH = os.path.join(DATA_DIR, "smiles_lookup.csv")
-APPROVED_DRUGS_PATH = os.path.join(DATA_DIR, "approved_drugs.txt")
+DISEASE_PATH = os.path.join(REAL_DATA_DIR, "disease_signature.csv")
+L1000_PATH = os.path.join(REAL_DATA_DIR, "l1000_matrix.csv")
+SMILES_LOOKUP_PATH = os.path.join(REAL_DATA_DIR, "smiles_lookup.csv")
+APPROVED_DRUGS_PATH = os.path.join(REAL_DATA_DIR, "approved_drugs.txt")
+
+# Synthetic-only paths, used by the "Generate fresh mock/demo data" option.
+MOCK_DISEASE_PATH = os.path.join(MOCK_DATA_DIR, "disease_signature.csv")
+MOCK_L1000_PATH = os.path.join(MOCK_DATA_DIR, "l1000_matrix.csv")
 
 st.set_page_config(page_title="RepurposeAI", page_icon="🧬", layout="wide")
 
@@ -171,7 +179,7 @@ with st.sidebar:
     data_on_disk = os.path.exists(DISEASE_PATH) and os.path.exists(L1000_PATH)
     source_options = []
     if data_on_disk:
-        source_options.append("Auto-detected files in data/raw/")
+        source_options.append("Auto-detected files in data/processed/")
     source_options += ["Upload my own CSVs", "Generate fresh mock/demo data"]
     data_source = st.radio("Data source", source_options, index=0)
 
@@ -227,17 +235,17 @@ if run_button:
         elif data_source == "Generate fresh mock/demo data":
             with st.spinner("Generating synthetic demo data..."):
                 run_stage("Generate mock data", generate_mock_data.main)
-            disease_df = run_stage("Load disease signature", _cached_load_disease, DISEASE_PATH)
+            disease_df = run_stage("Load disease signature", _cached_load_disease, MOCK_DISEASE_PATH)
             current_idx = 1
             _advance(1, {0})
-            l1000_df = run_stage("Load L1000 matrix", _cached_load_l1000, L1000_PATH)
+            l1000_df = run_stage("Load L1000 matrix", _cached_load_l1000, MOCK_L1000_PATH)
             data_label = "freshly generated synthetic demo data"
         else:
             disease_df = run_stage("Load disease signature", _cached_load_disease, DISEASE_PATH)
             current_idx = 1
             _advance(1, {0})
             l1000_df = run_stage("Load L1000 matrix", _cached_load_l1000, L1000_PATH)
-            data_label = "data/raw/ files (auto-detected)"
+            data_label = "data/processed/ files (auto-detected)"
 
         n_drugs_total = l1000_df.shape[1]
 

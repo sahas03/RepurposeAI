@@ -4,3 +4,31 @@ __pycache__/
 *.pyo
 .env
 .DS_Store
+.pytest_cache/
+
+# ---------------------------------------------------------------------------
+# Large source data — NEVER commit. The LINCS L1000 Level 5 GCTX is ~5.4 GB
+# compressed / 5.8 GB decompressed and must stay outside the repo; download it
+# from GEO (GSE70138) locally instead.
+# ---------------------------------------------------------------------------
+*.gctx
+*.gctx.gz
+*.gct
+GSE*_Broad_LINCS_*
+*.h5
+*.hdf5
+
+# Intermediate arrays and caches produced while building the real data
+*.npy
+*.npz
+*.pkl
+data/raw/geo_cache/
+*_family.soft.gz
+
+# Scratch/working analysis scripts (not part of the pipeline)
+repurposeai/run_real.py
+repurposeai/eval_clean.py
+repurposeai/verify_data.py
+
+# Bulk ChEMBL intermediate — regenerate with scripts/build_indication_lookup.py
+repurposeai/data/processed/ra_all_chembl_raw.json

@@ -67,6 +67,22 @@ def apply_safety_filter(candidates: pd.DataFrame, smiles_lookup: dict[str, str],
     return out
 
 
+# Novelty label states. Three, not two: a drug that was trialled for the
+# disease but never approved is neither validation evidence nor a novel
+# discovery, and collapsing it into either one misrepresents it.
+LABEL_APPROVED = "known hit (approved)"
+LABEL_INVESTIGATIONAL = "reported RA investigation (not approved)"
+LABEL_NOVEL = "novel candidate"
+
+# Indication-string convention (see data/raw/ra_indications.json):
+#   "<disease>"               -> approved for that disease
+#   "<disease> (<qualifier>)" -> a weaker, qualified relationship. Only a
+#                                qualifier containing "investigational" earns
+#                                its own label; anything else (e.g. a failed
+#                                trial) is deliberately NOT treated as evidence.
+INVESTIGATIONAL_QUALIFIER = "investigational"
+
+
 def apply_novelty_filter(candidates: pd.DataFrame, known_indications: dict[str, set[str]],
                           disease_name: str) -> pd.DataFrame:
     """
@@ -75,12 +91,22 @@ def apply_novelty_filter(candidates: pd.DataFrame, known_indications: dict[str, 
     disease_name: the disease you're targeting, used to check documented status
     """
     out = candidates.copy()
-    out["known_for_disease"] = out["drug"].apply(
-        lambda d: disease_name.lower() in {x.lower() for x in known_indications.get(d, set())}
-    )
-    out["novelty_label"] = out["known_for_disease"].map(
-        {True: "known hit (validation evidence)", False: "novel candidate"}
-    )
+    target = disease_name.lower().strip()
+    qualified_prefix = target + " ("
+
+    def _classify(drug: str) -> str:
+        indications = {str(x).lower() for x in known_indications.get(drug, set())}
+        if target in indications:
+            return LABEL_APPROVED
+        if any(i.startswith(qualified_prefix) and INVESTIGATIONAL_QUALIFIER in i
+               for i in indications):
+            return LABEL_INVESTIGATIONAL
+        return LABEL_NOVEL
+
+    out["novelty_label"] = out["drug"].apply(_classify)
+    # Stays boolean and approved-only: combine_scores()'s novelty bonus and the
+    # dashboard's known/novel table split both read this column.
+    out["known_for_disease"] = out["novelty_label"] == LABEL_APPROVED
     return out
 
 
