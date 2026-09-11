@@ -6,6 +6,17 @@
       "runtimeExecutable": "repurposeai/venv/Scripts/streamlit.exe",
       "runtimeArgs": ["run", "repurposeai/app/dashboard.py", "--server.headless", "true"],
       "port": 8501
+    },
+    {
+      "name": "repurposeai-api",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m", "uvicorn", "repurpose_api.main:app",
+        "--app-dir", "backend",
+        "--host", "127.0.0.1",
+        "--port", "8000"
+      ],
+      "port": 8000
     }
   ]
 }

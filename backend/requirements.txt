@@ -1,0 +1,21 @@
+# RepurposeAI backend -- the API layer only.
+#
+# The pipeline's own dependencies (pandas, numpy, scipy, ...) come from
+# ../repurposeai/requirements.txt; this service imports that package rather
+# than reimplementing it, so install both in the same environment.
+
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.6
+
+# Used directly by the pipeline modules this service calls into.
+pandas>=2.0
+numpy>=1.24
+
+# --- optional ---------------------------------------------------------------
+# rdkit>=2023.9   # Lipinski safety screen; only needed once data/raw/smiles_lookup.csv exists
+# gseapy>=1.1     # Enrichr pathway enrichment in /api/candidates/{drug}/explain (needs internet)
+
+# --- development ------------------------------------------------------------
+# pytest>=8.0
+# httpx>=0.27     # required by fastapi.testclient

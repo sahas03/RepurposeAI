@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+venv/
+.venv/
+
+# Demo-safety fallbacks are machine- and run-specific; regenerate them with
+# scripts/precompute_demo.py rather than committing them.
+precomputed/
