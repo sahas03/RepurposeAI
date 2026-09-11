@@ -1,10 +1,10 @@
 import { motion } from 'framer-motion'
 import { useMemo, useState } from 'react'
 import { cx } from '@/lib/cx'
-import { topContributingGenes } from '@/engine/scoring'
 import { GlassPanel, SectionHead } from '@/components/ui/GlassPanel'
 import { Hud, Provenance } from '@/components/ui/Hud'
 import { Reveal } from '@/components/ui/Reveal'
+import { useExplain } from '@/api/useExplain'
 import { useApp, useSelectedCandidate } from '@/store/useApp'
 import { EmptyField } from './SignatureSection'
 
@@ -29,10 +29,13 @@ export function ExplainSection() {
   const candidate = selected ?? result?.candidates[0] ?? null
   const [topN] = useState(10)
 
-  const genes = useMemo(() => {
-    if (!dataset || !result || !candidate) return []
-    return topContributingGenes(dataset, result.diseaseVec, candidate.drug, topN)
-  }, [dataset, result, candidate, topN])
+  // Gene contributions come from the backend (GET /api/candidates/{drug}/explain),
+  // which decomposes the score using the same Python that produced it.
+  const {
+    genes,
+    loading: genesLoading,
+    error: genesError,
+  } = useExplain(result ? result.dataset.id : null, candidate?.drug ?? null, topN)
 
   /** Share of the cosine numerator explained by these genes. */
   const share = useMemo(() => {
@@ -64,8 +67,19 @@ export function ExplainSection() {
           />
         </Reveal>
 
-        {!candidate || genes.length === 0 ? (
+        {!candidate ? (
           <EmptyField label="No candidate selected" />
+        ) : genesError ? (
+          <EmptyField label="Could not load the explanation" hint={genesError} />
+        ) : genes.length === 0 ? (
+          <EmptyField
+            label={genesLoading ? 'Decomposing the score…' : 'No contributions to show'}
+            hint={
+              genesLoading
+                ? 'Asking the pipeline which genes produced this score.'
+                : undefined
+            }
+          />
         ) : (
           <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_330px]">
             <Reveal>

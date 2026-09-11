@@ -60,13 +60,14 @@ CACHE_SIZE = _int("REPURPOSEAI_CACHE_SIZE", 32)
 #: Seconds to wait on Enrichr before giving up (venue wifi is not a dependency).
 ENRICHR_TIMEOUT = _int("REPURPOSEAI_ENRICHR_TIMEOUT", 6)
 
+# Vite takes the next free port when its default is busy (5173 -> 5174 -> ...),
+# and .claude/launch.json pins the frontend to 5199. A CORS allowlist that only
+# covers 5173 therefore breaks the moment a stale dev server is still running,
+# with a browser-console CORS error and a perfectly healthy-looking backend.
+# Cover the range it actually uses.
+_VITE_PORTS = (5173, 5174, 5175, 5176, 5199, 4173, 4174, 3000)
 _DEFAULT_ORIGINS = [
-    "http://localhost:5173",   # vite dev
-    "http://127.0.0.1:5173",
-    "http://localhost:4173",   # vite preview
-    "http://127.0.0.1:4173",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
+    f"http://{host}:{port}" for port in _VITE_PORTS for host in ("localhost", "127.0.0.1")
 ]
 
 _origins_env = os.environ.get("REPURPOSEAI_CORS_ORIGINS", "").strip()

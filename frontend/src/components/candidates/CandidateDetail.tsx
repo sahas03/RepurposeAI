@@ -1,9 +1,9 @@
 import { useMemo } from 'react'
 import { cx } from '@/lib/cx'
-import { topContributingGenes } from '@/engine/scoring'
 import { Drawer } from '@/components/ui/Drawer'
 import { GlassPanel } from '@/components/ui/GlassPanel'
 import { AnimatedNumber, Hud, Provenance } from '@/components/ui/Hud'
+import { useExplain } from '@/api/useExplain'
 import { useApp, useDetailCandidate } from '@/store/useApp'
 
 /**
@@ -15,14 +15,15 @@ export function CandidateDetail() {
   const candidate = useDetailCandidate()
   const closeDetail = useApp((s) => s.closeDetail)
   const result = useApp((s) => s.result)
-  const dataset = useApp((s) => s.dataset)
 
   const open = !!candidate && !!result
 
-  const genes = useMemo(() => {
-    if (!dataset || !result || !candidate) return []
-    return topContributingGenes(dataset, result.diseaseVec, candidate.drug, 8)
-  }, [dataset, result, candidate])
+  // Decomposed server-side by the real pipeline, not re-scored here.
+  const {
+    genes,
+    loading: genesLoading,
+    error: genesError,
+  } = useExplain(result ? result.dataset.id : null, candidate?.drug ?? null, 8)
 
   const rankPct = useMemo(() => {
     if (!result || !candidate) return 0
@@ -119,6 +120,16 @@ export function CandidateDetail() {
                   </tr>
                 </thead>
                 <tbody>
+                  {genes.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="px-4 py-6 text-center text-[11.5px] text-faint">
+                        {genesError ??
+                          (genesLoading
+                            ? 'Decomposing score…'
+                            : 'No contributions to show.')}
+                      </td>
+                    </tr>
+                  )}
                   {genes.map((g) => (
                     <tr key={g.gene} className="border-b border-line/[0.06] last:border-0">
                       <td className="px-4 py-2.5 font-mono text-[12px] text-ink">{g.gene}</td>

@@ -28,7 +28,13 @@ export function ReversalSection() {
   const [pick, setPick] = useState<string | null>(null)
 
   const diseaseVec = useMemo(() => {
+    // After a run this is the backend's vector, computed by the Python.
     if (result) return result.diseaseVec
+    // Before a run there is nothing to ask the backend for: preload() parses
+    // the CSVs without scoring, precisely so this view is not empty, and the
+    // API has no endpoint that z-scores a signature without running the whole
+    // pipeline. This is therefore the ONE place the TS engine still executes
+    // in the live path -- a preview that the first real run replaces.
     if (!dataset) return null
     return zscoreDiseaseSignature(dataset.disease.map((d) => d.logFC))
   }, [dataset, result])
