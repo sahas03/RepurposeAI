@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "repurposeai-dashboard",
+      "runtimeExecutable": "repurposeai/venv/Scripts/streamlit.exe",
+      "runtimeArgs": ["run", "repurposeai/app/dashboard.py", "--server.headless", "true"],
+      "port": 8501
+    }
+  ]
+}
