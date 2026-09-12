@@ -41,7 +41,14 @@ from data_loader import (  # noqa: E402
 )
 from signature_matching import cosine_reversal_score, weighted_connectivity_score, rank_candidates  # noqa: E402
 from interpretability import top_contributing_genes, pathway_enrichment  # noqa: E402
-from filters import apply_safety_filter, apply_novelty_filter, combine_scores, RDKIT_AVAILABLE  # noqa: E402
+from filters import (  # noqa: E402
+    screen_drugs,
+    rank_repurposing_candidates,
+    STATUS_INDICATED,
+    STATUS_NOT_REVERSING,
+    STATUS_SAFETY_FAIL,
+    RDKIT_AVAILABLE,
+)
 from validate import check_recovery, format_validation_statement, KNOWN_VALIDATION_SETS  # noqa: E402
 import generate_mock_data  # noqa: E402
 
@@ -142,11 +149,14 @@ with st.expander("🔎 What's real vs. simplified in this demo (honest-answer ch
   optional alt method in the sidebar (Advanced settings) — not the default because it's
   slower and more sensitive to threshold choices.
 - **Safety screening** — Lipinski's Rule of Five (via RDKit) is a **fast druglikeness
-  proxy**, not full ADMET modeling. It also only applies to small molecules — biologics
-  like adalimumab or etanercept don't have a SMILES structure, so they're excluded from
-  that check rather than mis-scored.
-- **Known vs. novel labeling** — sourced directly from `validate.KNOWN_VALIDATION_SETS`,
-  a small hand-curated reference list, not a full DrugBank indication database.
+  proxy**, not full ADMET modeling, used as a pass/fail gate (≤1 violation passes). It
+  only applies to small molecules — biologics like adalimumab or etanercept don't have a
+  SMILES structure, so they're marked "not screened" rather than mis-scored.
+- **Two separate outputs** — *Validation* ranks every drug by reversal score alone and
+  checks where known RA drugs land. *Candidates* excludes drugs already indicated for RA
+  and ranks the rest by reversal score. "Already indicated" currently comes from
+  `validate.KNOWN_VALIDATION_SETS`, a small hand-curated list, not a full DrugBank
+  indication database.
 - **Pathway enrichment** — a live Enrichr API call. If the venue wifi is down, it fails
   fast and the dashboard falls back to the gene-level explanation only (never a crash).
 - **Fast scoring toggle** — an optional vectorized reimplementation of the team's cosine
@@ -204,7 +214,7 @@ with st.sidebar:
 # --------------------------------------------------------------------------
 if run_button:
     st.session_state.pop("pipeline_error", None)
-    st.session_state.pop("ranked", None)
+    st.session_state.pop("candidates", None)
 
     STEP_DWELL = 0.15  # floor so a cache-hit rerun is still perceptible, well under the 300ms motion budget
 
@@ -246,7 +256,6 @@ if run_button:
 
         current_idx = 2
         _advance(2, {0, 1})
-        pool_n = max(display_top_n, validation_top_k, 20)
         if scoring_method.startswith("Weighted"):
             scores = run_stage("Score candidates (WTCS)", _cached_wtcs, disease_df, l1000_df)
             method_label = "Weighted Connectivity Score (WTCS)"
@@ -257,25 +266,33 @@ if run_button:
             scores = run_stage("Score candidates (cosine)", _cached_cosine, disease_vec, l1000_df)
             method_label = "Cosine similarity"
 
-        ranked = run_stage("Rank candidates", rank_candidates, scores, pool_n)
+        # VALIDATION input: every drug, ranked by reversal score alone
+        reversal_ranked = run_stage("Rank by reversal", rank_candidates, scores, len(scores))
 
         current_idx = 3
         _advance(3, {0, 1, 2})
+        # "Already indicated" lookup -- today only the curated validation list; merge a
+        # DrugBank/ChEMBL {drug: {indications}} lookup in here once that data lands.
         known_drugs_for_disease = KNOWN_VALIDATION_SETS.get(disease_name.lower(), set())
         known_indications = {d: {disease_name} for d in known_drugs_for_disease}
-        ranked = run_stage("Novelty filter", apply_novelty_filter, ranked, known_indications, disease_name)
 
         safety_available = os.path.exists(SMILES_LOOKUP_PATH) and RDKIT_AVAILABLE
+        smiles_lookup = approved_set = None
         if safety_available:
             smiles_df = pd.read_csv(SMILES_LOOKUP_PATH)
             smiles_lookup = dict(zip(smiles_df["drug"], smiles_df["smiles"]))
-            approved_set = None
             if os.path.exists(APPROVED_DRUGS_PATH):
                 with open(APPROVED_DRUGS_PATH) as f:
                     approved_set = {line.strip() for line in f if line.strip()}
-            ranked = run_stage("Safety filter", apply_safety_filter, ranked, smiles_lookup, approved_set)
 
-        ranked = run_stage("Combine scores", combine_scores, ranked)
+        # CANDIDATES output: exclude already-indicated, non-reversing and Lipinski-failing
+        # drugs, then rank the rest by reversal score (no blended weights)
+        screened = run_stage(
+            "Screen candidates (novelty + safety gates)", screen_drugs,
+            scores, known_indications, disease_name, smiles_lookup, approved_set,
+        )
+        candidates = run_stage("Rank candidates", rank_repurposing_candidates, screened, None)
+        screen_counts = screened["candidate_status"].value_counts().to_dict()
 
         # stages 4 (Explainability) and 5 (Validation) run lazily just below,
         # the instant their data dependency exists -- no fake dwell needed.
@@ -283,7 +300,9 @@ if run_button:
 
         st.session_state.update(
             dict(
-                ranked=ranked,
+                candidates=candidates,
+                reversal_ranked=reversal_ranked,
+                screen_counts=screen_counts,
                 disease_vec=disease_vec,
                 l1000_df=l1000_df,
                 disease_name=disease_name,
@@ -315,8 +334,10 @@ if st.session_state.get("pipeline_error"):
 # --------------------------------------------------------------------------
 # Results
 # --------------------------------------------------------------------------
-if "ranked" in st.session_state:
-    ranked = st.session_state["ranked"]
+if "candidates" in st.session_state:
+    candidates = st.session_state["candidates"]
+    reversal_ranked = st.session_state["reversal_ranked"]
+    screen_counts = st.session_state["screen_counts"]
     disease_vec = st.session_state["disease_vec"]
     l1000_df = st.session_state["l1000_df"]
     disease_name = st.session_state["disease_name"]
@@ -332,7 +353,7 @@ if "ranked" in st.session_state:
         [
             {"label": "Genes matched", "value": st.session_state["n_genes_matched"], "icon": "🧬", "accent": "teal"},
             {"label": "Drugs scored", "value": st.session_state["n_drugs_total"], "icon": "💊", "accent": "navy"},
-            {"label": "Candidates shown", "value": min(display_top_n, len(ranked)), "icon": "📋", "accent": "teal"},
+            {"label": "Candidates shown", "value": min(display_top_n, len(candidates)), "icon": "📋", "accent": "teal"},
             {
                 "label": "Safety screen",
                 "value": "ACTIVE" if st.session_state["safety_available"] else "NOT LOADED",
@@ -346,12 +367,18 @@ if "ranked" in st.session_state:
 
     # ---- Validation hero ---------------------------------------------
     render_section_header("flask-check", "Validation — does this method actually work?")
+    st.caption("Ranks **all** drugs by reversal score alone (no novelty or safety adjustments) "
+               "and checks where known treatments land. Known drugs appear here, never in the candidates list.")
     known_drugs = KNOWN_VALIDATION_SETS.get(disease_name.lower().strip(), set())
     real_signal = has_real_validation_signal(l1000_df.columns, known_drugs)
+    validation_drugs = []
 
     if real_signal:
         try:
-            result = run_stage("Validation check", check_recovery, ranked, disease_name, top_k=validation_top_k)
+            result = run_stage("Validation check", check_recovery, reversal_ranked, disease_name, top_k=validation_top_k)
+            validation_drugs = [
+                d for d in reversal_ranked["drug"] if str(d).lower().strip() in set(result["recovered_drugs"])
+            ]
             st.markdown('<div class="rpa-hero rpa-reveal">', unsafe_allow_html=True)
             render_stats(
                 [
@@ -362,13 +389,24 @@ if "ranked" in st.session_state:
                         "icon": "✅",
                         "accent": "cyan",
                     },
-                    {"label": "Novel candidates found", "value": len(result["novel_candidates"]), "icon": "🆕", "accent": "purple"},
+                    {
+                        "label": "Known drugs in library",
+                        "value": f"{result['reference_in_library']}/{result['reference_set_size']}",
+                        "icon": "📚",
+                        "accent": "purple",
+                    },
                 ]
             )
             if result["recovered_drugs"]:
                 render_pills([f"💊 {d}" for d in result["recovered_drugs"]])
             st.markdown("</div>", unsafe_allow_html=True)
             st.info(format_validation_statement(result))
+            if result["reference_ranks"]:
+                st.caption("Reversal rank of each known drug present in the library:")
+                render_table(
+                    pd.DataFrame(list(result["reference_ranks"].items()), columns=["drug", "rank"]),
+                    rename={"drug": "Known drug", "rank": f"Reversal rank (of {result['n_drugs_ranked']})"},
+                )
             with st.expander("Why does recovering *known* drugs prove anything?"):
                 st.write(
                     "If a method can blindly re-discover drugs that are already proven "
@@ -381,7 +419,7 @@ if "ranked" in st.session_state:
         except StageError as e:
             st.warning(f"Validation check failed at {e.stage}: {e.original}")
     else:
-        synthetic = synthetic_ground_truth_check(ranked, l1000_df.columns, top_k=validation_top_k)
+        synthetic = synthetic_ground_truth_check(reversal_ranked, l1000_df.columns, top_k=validation_top_k)
         if synthetic:
             st.warning(
                 "Running on **synthetic demo data** — drug names here are placeholders, "
@@ -425,44 +463,31 @@ if "ranked" in st.session_state:
 
     glow_divider()
 
-    # ---- Ranked candidates: known vs novel -----------------------------
-    st.subheader("Ranked Candidates")
-    sort_col = "final_rank" if "final_rank" in ranked.columns else "rank"
-    display_table = ranked.sort_values(sort_col).head(display_top_n).copy()
-
-    # keep a single unified rank column (drop whichever of rank/final_rank isn't the sort key)
-    dupe_rank_col = "rank" if sort_col == "final_rank" else "final_rank"
-    if dupe_rank_col in display_table.columns:
-        display_table = display_table.drop(columns=[dupe_rank_col])
-    display_table = display_table.rename(columns={sort_col: "rank"})
-
+    # ---- Repurposing candidates (separate from validation) ---------------
+    st.subheader("Repurposing Candidates")
+    st.markdown('<span class="rpa-badge-novel">🆕 NOT CURRENTLY INDICATED FOR THIS DISEASE</span>', unsafe_allow_html=True)
+    st.caption(
+        "Ranked by reversal score. Excluded before ranking: "
+        f"{screen_counts.get(STATUS_INDICATED, 0)} already indicated for {disease_name} (shown in Validation), "
+        f"{screen_counts.get(STATUS_NOT_REVERSING, 0)} that don't reverse the signature, "
+        f"{screen_counts.get(STATUS_SAFETY_FAIL, 0)} that failed the Lipinski safety gate."
+    )
+    display_table = candidates.head(display_top_n)
     col_rename = {
-        "rank": "Rank",
+        "candidate_rank": "Rank",
         "drug": "Drug",
         "reversal_score": "Reversal Score",
-        "final_score": "Final Score",
-        "safety_score": "Safety Score",
+        "reversal_rank": "Rank among all drugs",
+        "safety_status": "Safety gate",
+        "lipinski_violations": "Lipinski violations",
+        "approved": "Approved",
     }
-
-    if "novelty_label" in display_table.columns:
-        known_df = display_table[display_table["known_for_disease"]].drop(columns=["novelty_label", "known_for_disease"])
-        novel_df = display_table[~display_table["known_for_disease"]].drop(columns=["novelty_label", "known_for_disease"])
-
-        st.markdown('<span class="rpa-badge-known">🏆 KNOWN HIT — validation evidence</span>', unsafe_allow_html=True)
-        if known_df.empty:
-            st.caption("None of the currently displayed candidates are known RA drugs. Try increasing 'Candidates to display'.")
-        else:
-            render_table(known_df, rename=col_rename)
-
-        st.markdown('<span class="rpa-badge-novel">🆕 NOVEL CANDIDATE</span>', unsafe_allow_html=True)
-        if novel_df.empty:
-            st.caption("No novel candidates in the current display window.")
-        else:
-            render_table(novel_df, rename=col_rename)
+    if display_table.empty:
+        st.caption("No drugs passed every gate.")
     else:
         render_table(display_table, rename=col_rename)
 
-    csv_bytes = ranked.sort_values(sort_col).to_csv(index=False).encode("utf-8")
+    csv_bytes = candidates.to_csv(index=False).encode("utf-8")
     st.download_button(
         "⬇ Download ranked candidates (CSV)",
         data=csv_bytes,
@@ -474,7 +499,7 @@ if "ranked" in st.session_state:
 
     # ---- Explainability --------------------------------------------------
     render_section_header("search-network", "Why this candidate?", level="h3")
-    selected_drug = st.selectbox("Drug", display_table["drug"].tolist())
+    selected_drug = st.selectbox("Drug", display_table["drug"].tolist() + validation_drugs)
     if selected_drug:
         try:
             genes_df = run_stage(

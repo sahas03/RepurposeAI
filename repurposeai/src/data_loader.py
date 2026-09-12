@@ -31,8 +31,28 @@ Real-data notes:
 """
 
 from __future__ import annotations
+import csv
+import io
 import pandas as pd
 import numpy as np
+
+# Below this many shared genes a reversal score is not meaningful (with 1 gene,
+# cosine gives every drug exactly +/-1). Enforced by harmonize_genes and by the
+# scoring functions in signature_matching for callers that skip harmonization.
+MIN_SHARED_GENES = 20
+
+
+def _raw_header(path_or_buf) -> list[str]:
+    """First CSV row exactly as written -- before pandas renames duplicates to 'x.1'."""
+    if isinstance(path_or_buf, (str, bytes)) or hasattr(path_or_buf, "__fspath__"):
+        with open(path_or_buf, newline="", encoding="utf-8-sig") as f:
+            return next(csv.reader(f), [])
+    pos = path_or_buf.tell()
+    line = path_or_buf.readline()
+    path_or_buf.seek(pos)
+    if isinstance(line, bytes):
+        line = line.decode("utf-8-sig")
+    return next(csv.reader(io.StringIO(line)), [])
 
 
 def load_disease_signature(path: str, top_n: int | None = None) -> pd.DataFrame:
@@ -54,7 +74,19 @@ def load_disease_signature(path: str, top_n: int | None = None) -> pd.DataFrame:
 
 
 def load_l1000_matrix(path: str) -> pd.DataFrame:
-    """Load drug perturbation signature matrix (genes as rows, drugs as columns)."""
+    """
+    Load drug perturbation signature matrix (genes as rows, drugs as columns).
+    Duplicate drug names (case-insensitive) are rejected: pandas would otherwise
+    silently rename the second copy to 'name.1', which then escapes the indication
+    lookup and can surface an already-indicated drug as a "novel" candidate.
+    """
+    drugs = pd.Index([c.strip().lower() for c in _raw_header(path)[1:]])
+    dupes = sorted(set(drugs[drugs.duplicated()]))
+    if dupes:
+        raise ValueError(
+            f"Duplicate drug columns in L1000 matrix: {dupes[:5]}. Collapse replicate "
+            "signatures per drug first (e.g. average them, as prepare_real_data.py does)."
+        )
     df = pd.read_csv(path, index_col=0)
     df.index = df.index.astype(str).str.upper().str.strip()
     df = df[~df.index.duplicated(keep="first")]
@@ -67,7 +99,7 @@ def harmonize_genes(disease_df: pd.DataFrame, l1000_df: pd.DataFrame) -> tuple[p
     the usual bottleneck — expect ~500-978 genes to survive this step).
     """
     shared_genes = sorted(set(disease_df["gene"]) & set(l1000_df.index))
-    if len(shared_genes) < 20:
+    if len(shared_genes) < MIN_SHARED_GENES:
         raise ValueError(
             f"Only {len(shared_genes)} shared genes found between disease signature "
             "and L1000 matrix. Check gene ID formats (both should be HGNC symbols)."
@@ -82,7 +114,14 @@ def harmonize_genes(disease_df: pd.DataFrame, l1000_df: pd.DataFrame) -> tuple[p
 def zscore_disease_signature(disease_df: pd.DataFrame) -> pd.Series:
     """Convert logFC column into a z-scored vector indexed by gene."""
     vals = disease_df.set_index("gene")["logFC"]
-    z = (vals - vals.mean()) / vals.std(ddof=0)
+    sd = vals.std(ddof=0)
+    if not np.isfinite(sd) or sd == 0:
+        # z-scoring would divide 0 by 0 -> an all-NaN vector -> NaN scores for every drug
+        raise ValueError(
+            f"Disease signature has zero variance ({len(vals)} gene(s), all logFC equal): "
+            "there is no differential expression to reverse."
+        )
+    z = (vals - vals.mean()) / sd
     return z
 
 

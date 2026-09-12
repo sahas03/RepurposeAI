@@ -61,8 +61,10 @@ def top_contributing_genes(disease_vec: pd.Series, drug_vec: pd.Series, top_n: i
               .drop(columns="_label")
               .head(top_n).reset_index(drop=True))
 
-    out["direction"] = np.where(
-        out["contribution"] < 0, "reversed by drug", "reinforced by drug (unwanted)"
+    out["direction"] = np.select(
+        [out["contribution"] < 0, out["contribution"] > 0],
+        ["reversed by drug", "reinforced by drug (unwanted)"],
+        "no change",  # zero contribution (e.g. drug has no effect on this gene) is neither
     )
     return out
 
